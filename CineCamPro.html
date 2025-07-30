@@ -18,6 +18,9 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
     <!-- Tweakpane Library for UI controls -->
     <script src="https://cdn.jsdelivr.net/npm/tweakpane@3.1.0/dist/tweakpane.min.js"></script>
     
+    <!-- glfx.js for WebGL-based filter effects -->
+    <script src="https://cdn.jsdelivr.net/npm/glfx@1.1.2/glfx.min.js"></script>
+
     <style>
         /* --- CSS Variables and Theming --- */
         :root {
@@ -66,13 +69,32 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             background: black;
         }
 
-        #video-preview {
-            display: block;
+        #video-preview, #overlay-canvas {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             width: 100%;
             height: 100%;
             object-fit: contain; /* 'contain' is better for seeing the whole frame */
         }
         
+        #overlay-canvas {
+            z-index: 10;
+        }
+
+        #histogram-canvas {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 256px;
+            height: 100px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            z-index: 30; /* Above other overlays */
+        }
+
         #video-source {
             display: none; /* The raw video source is never shown to the user */
         }
@@ -217,8 +239,12 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
         <!-- The hidden video element that receives the raw camera feed -->
         <video id="video-source" autoplay playsinline></video>
         
-        <!-- The canvas where the video is rendered with effects -->
+        <!-- The WebGL canvas where the video is rendered with effects -->
         <canvas id="video-preview"></canvas>
+        <!-- The 2D canvas for drawing UI overlays like grids and guides -->
+        <canvas id="overlay-canvas"></canvas>
+        <!-- The canvas for displaying the real-time histogram -->
+        <canvas id="histogram-canvas"></canvas>
 
         <!-- Container for Tweakpane UI controls, slides in from the side -->
         <div id="controls-container"></div>
@@ -248,8 +274,11 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
     <script>
         // --- DOM Elements ---
         const video = document.getElementById('video-source');
-        const canvas = document.getElementById('video-preview');
-        const ctx = canvas.getContext('2d');
+        const glCanvas = document.getElementById('video-preview');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const overlayCtx = overlayCanvas.getContext('2d');
+        const histogramCanvas = document.getElementById('histogram-canvas');
+        const histogramCtx = histogramCanvas.getContext('2d');
         const controlsContainer = document.getElementById('controls-container');
         const controlsToggleButton = document.getElementById('controls-toggle-button');
 
@@ -258,13 +287,14 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
         let audioContext, analyser, dataArray;
         let pane, settingsFolder; // Make pane and settings folder globally accessible
         let lastRenderTime = 0; // For frame rate simulation
+        let webgl, texture; // For WebGL rendering
 
         const PRESETS = {
-            'None': { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, invert: 0, 'hue-rotate': 0 },
-            'Teal & Orange': { brightness: 105, contrast: 115, saturate: 120, sepia: 15, grayscale: 0, invert: 0, 'hue-rotate': -10 },
-            'Vintage Film': { brightness: 110, contrast: 95, saturate: 85, sepia: 45, grayscale: 0, invert: 0, 'hue-rotate': 0 },
-            'Noir': { brightness: 110, contrast: 140, saturate: 0, sepia: 0, grayscale: 100, invert: 0, 'hue-rotate': 0 },
-            'Lomograph': { brightness: 100, contrast: 140, saturate: 140, sepia: 10, grayscale: 0, invert: 0, 'hue-rotate': 5 },
+            'None': { brightness: 0, contrast: 0, saturate: 0, sepia: 0, hue: 0 },
+            'Teal & Orange': { brightness: 0.05, contrast: 0.1, saturate: 0.2, sepia: 0.1, hue: -0.05 },
+            'Vintage Film': { brightness: 0.1, contrast: -0.05, saturate: -0.15, sepia: 0.3, hue: 0 },
+            'Noir': { brightness: 0.1, contrast: 0.2, saturate: -1, sepia: 0, hue: 0 },
+            'Lomograph': { brightness: 0, contrast: 0.15, saturate: 0.15, sepia: 0.05, hue: 0.02 },
         };
         const RESOLUTIONS = {
             '720p': { width: 1280, height: 720 },
@@ -274,9 +304,20 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
         const PARAMS = { 
             zoom: 1,
             deviceId: 'default',
-            ...PRESETS['None'],
+            // --- WebGL Shader Params ---
+            brightness: 0,
+            contrast: 0,
+            saturate: 0,
+            hue: 0,
+            sepia: 0,
+            sharpness: 0,
+            exposure: 0,
+            temperature: 6500, // In Kelvin, 6500 is neutral
+            // --- Overlay & App Params ---
             showCropBars: false,
             showRuleOfThirds: true,
+            showHistogram: false,
+            mirror: false,
             darkMode: true,
             resolution: '1080p',
             frameRate: 'Native',
@@ -287,53 +328,45 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
          * Sets up the Tweakpane control panel with all the sliders, toggles, and buttons.
          */
         function setupControls() {
-            // Initialize Tweakpane for the main control panel
             pane = new Tweakpane.Pane({
                 container: document.getElementById('controls-container'),
                 title: 'CineCam Pro Controls',
             });
 
-            // Folder for preset cinematic looks
-            const presetFolder = pane.addFolder({ title: 'Cinematic Presets', expanded: true });
-            const presetControl = presetFolder.addInput({ preset: 'None' }, 'preset', {
+            // --- Cinematic Presets ---
+            const presetFolder = pane.addFolder({ title: 'Cinematic Presets' });
+            presetFolder.addInput({ preset: 'None' }, 'preset', {
                 options: Object.keys(PRESETS).map(name => ({ text: name, value: name })),
-            });
-
-            presetControl.on('change', (ev) => {
+            }).on('change', (ev) => {
                 const preset = PRESETS[ev.value];
                 if (preset) {
                     // Update the PARAMS object with the values from the selected preset
                     Object.keys(preset).forEach(key => {
-                        PARAMS[key] = preset[key];
+                        if (key in PARAMS) PARAMS[key] = preset[key];
                     });
-                    // Refresh the Tweakpane UI to show the new values in the sliders
+                    // Refresh the Tweakpane UI to show the new values
                     pane.refresh();
                 }
             });
 
-            // Folder for manual image adjustments
-            const manualFolder = pane.addFolder({ title: 'Manual Controls' });
-            manualFolder.addInput(PARAMS, 'zoom', { min: 1, max: 4, step: 0.1, label: 'Zoom' });
-            manualFolder.addInput(PARAMS, 'brightness', { min: 0, max: 200, step: 1, label: 'Brightness (%)' });
-            manualFolder.addInput(PARAMS, 'contrast', { min: 0, max: 200, step: 1, label: 'Contrast (%)' });
-            manualFolder.addInput(PARAMS, 'saturate', { min: 0, max: 200, step: 1, label: 'Saturation (%)' });
-            manualFolder.addInput(PARAMS, 'hue-rotate', { min: 0, max: 360, step: 1, label: 'Hue (deg)' });
-            
-            // Folder for simple color filters
-            const filterFolder = pane.addFolder({ title: 'Color Filters' });
-            filterFolder.addInput(PARAMS, 'sepia', { min: 0, max: 100, step: 1, label: 'Sepia (%)' });
-            filterFolder.addInput(PARAMS, 'grayscale', { min: 0, max: 100, step: 1, label: 'Grayscale (%)' });
-            filterFolder.addInput(PARAMS, 'invert', { min: 0, max: 100, step: 1, label: 'Invert (%)' });
+            // --- Manual Shader Controls ---
+            const manualFolder = pane.addFolder({ title: 'Manual Controls', expanded: true });
+            manualFolder.addInput(PARAMS, 'exposure', { min: -1, max: 1, step: 0.05, label: 'Exposure' });
+            manualFolder.addInput(PARAMS, 'contrast', { min: -1, max: 1, step: 0.05, label: 'Contrast' });
+            manualFolder.addInput(PARAMS, 'saturate', { min: -1, max: 1, step: 0.05, label: 'Saturation' });
+            manualFolder.addInput(PARAMS, 'temperature', { min: 2000, max: 10000, step: 100, label: 'Temp (K)' });
+            manualFolder.addInput(PARAMS, 'sharpness', { min: 0, max: 5, step: 0.1, label: 'Sharpness' });
 
             // Folder for guides and overlays
             const overlayFolder = pane.addFolder({ title: 'Visual Guides' });
             overlayFolder.addInput(PARAMS, 'showCropBars', { label: 'Cinematic Bars (2.35:1)' });
             overlayFolder.addInput(PARAMS, 'showRuleOfThirds', { label: 'Rule of Thirds Grid' });
+            overlayFolder.addInput(PARAMS, 'showHistogram', { label: 'Histogram' });
+            overlayFolder.addInput(PARAMS, 'mirror', { label: 'Mirror Video' });
 
             // Folder for app settings like resolution and theme
             settingsFolder = pane.addFolder({ title: 'Settings' });
             settingsFolder.addInput(PARAMS, 'darkMode', { label: 'Dark Mode' }).on('change', (ev) => {
-                // Toggles the 'light-mode' class on the body
                 document.body.classList.toggle('light-mode', !ev.value);
             });
 
@@ -341,7 +374,6 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
                 label: 'Resolution',
                 options: Object.keys(RESOLUTIONS).map(r => ({ text: r, value: r })),
             }).on('change', (ev) => {
-                // When resolution changes, we must stop the old stream and start a new one
                 if (stream) {
                     stream.getTracks().forEach(track => track.stop());
                 }
@@ -350,11 +382,7 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
 
             settingsFolder.addInput(PARAMS, 'frameRate', {
                 label: 'Frame Rate',
-                options: [
-                    { text: 'Native', value: 'Native' },
-                    { text: '30 fps', value: '30' },
-                    { text: '24 fps', value: '24' },
-                ]
+                options: [ { text: 'Native', value: 'Native' }, { text: '30 fps', value: '30' }, { text: '24 fps', value: '24' } ]
             });
         }
 
@@ -363,27 +391,14 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-                // Only add the control if there's more than one camera
-                if (videoDevices.length > 1 && settingsFolder) {
+                if (videoDevices.length > 1 && settingsFolder && !settingsFolder.cameraControlAdded) {
                     const cameraOptions = videoDevices.map(device => ({
                         text: device.label || `Camera ${videoDevices.indexOf(device) + 1}`,
                         value: device.deviceId
                     }));
-
                     cameraOptions.unshift({ text: 'Default', value: 'default' });
-
-                    const cameraControl = settingsFolder.addInput(PARAMS, 'deviceId', {
-                        label: 'Camera',
-                        options: cameraOptions,
-                    });
-
-                    cameraControl.on('change', () => {
-                        // Re-initialize the camera with the new device ID
-                        setupCamera(RESOLUTIONS[PARAMS.resolution]);
-                    });
-
-                    // Add a flag to prevent this control from being added multiple times
+                    const cameraControl = settingsFolder.addInput(PARAMS, 'deviceId', { label: 'Camera', options: cameraOptions });
+                    cameraControl.on('change', () => setupCamera(RESOLUTIONS[PARAMS.resolution]));
                     settingsFolder.cameraControlAdded = true;
                 }
             } catch (err) {
@@ -391,155 +406,269 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             }
         }
 
-        /**
-         * Initializes the camera stream.
-         * @param {object} constraints - The desired video resolution constraints.
-         */
-        async function setupCamera(constraints = RESOLUTIONS['1080p']) {
-            // Stop any existing stream before starting a new one.
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
+        /** Probes the camera for native hardware controls and adds them to the UI if supported. */
+        function setupNativeControls() {
+            const track = stream.getVideoTracks()[0];
+            if (!track) return;
+
+            const capabilities = track.getCapabilities();
+
+            // Only create the folder if at least one native control is supported
+            let nativeFolder;
+            const addNativeFolder = () => {
+                if (!nativeFolder) {
+                    nativeFolder = pane.addFolder({ title: 'Native Controls', expanded: false });
+                }
+            };
+
+            // --- ISO Control ---
+            if (capabilities.iso) {
+                addNativeFolder();
+                nativeFolder.addInput(track.getSettings(), 'iso', {
+                    min: capabilities.iso.min,
+                    max: capabilities.iso.max,
+                    step: capabilities.iso.step || 1,
+                    label: 'ISO'
+                }).on('change', (ev) => track.applyConstraints({ advanced: [{ iso: ev.value }] }));
             }
 
+            // --- Exposure Compensation Control ---
+            if (capabilities.exposureCompensation) {
+                addNativeFolder();
+                nativeFolder.addInput(track.getSettings(), 'exposureCompensation', {
+                    min: capabilities.exposureCompensation.min,
+                    max: capabilities.exposureCompensation.max,
+                    step: capabilities.exposureCompensation.step || 0.1,
+                    label: 'EV Comp'
+                }).on('change', (ev) => track.applyConstraints({ advanced: [{ exposureCompensation: ev.value }] }));
+            }
+
+            // --- Focus Control ---
+            if (capabilities.focusMode && capabilities.focusMode.includes('manual')) {
+                 addNativeFolder();
+                 // Focus distance
+                 if (capabilities.focusDistance) {
+                    nativeFolder.addInput(track.getSettings(), 'focusDistance', {
+                        min: capabilities.focusDistance.min,
+                        max: capabilities.focusDistance.max,
+                        step: capabilities.focusDistance.step || 0.01,
+                        label: 'Focus'
+                    }).on('change', async (ev) => {
+                        await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: ev.value }] });
+                    });
+                 }
+            }
+        }
+
+        /** Initializes the camera stream. */
+        async function setupCamera(constraints = RESOLUTIONS['1080p']) {
+            if (stream) stream.getTracks().forEach(track => track.stop());
             try {
                 const videoConstraints = {
                     width: { ideal: constraints.width },
                     height: { ideal: constraints.height },
                 };
-
-                // If a specific device is selected, use its ID. Otherwise, use the default facingMode.
                 if (PARAMS.deviceId && PARAMS.deviceId !== 'default') {
                     videoConstraints.deviceId = { exact: PARAMS.deviceId };
                 } else {
-                    videoConstraints.facingMode = 'environment'; // Prefer the rear camera
+                    videoConstraints.facingMode = 'environment';
                 }
-
-                // Request camera and microphone access from the browser
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: videoConstraints,
-                    audio: true // Also capture audio for recording and visualization
-                });
-
+                stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: true });
                 video.srcObject = stream;
-
                 video.onloadedmetadata = () => {
-                    // Match canvas dimensions to the actual video stream dimensions
                     const streamSettings = stream.getVideoTracks()[0].getSettings();
-                    canvas.width = streamSettings.width;
-                    canvas.height = streamSettings.height;
+                    // Set canvas sizes
+                    glCanvas.width = overlayCanvas.width = streamSettings.width;
+                    glCanvas.height = overlayCanvas.height = streamSettings.height;
 
-                    // Populate the camera control dropdown if it hasn't been already
-                    if (settingsFolder && !settingsFolder.cameraControlAdded) {
-                        populateCameraControl();
+                    if (!webgl) { // Initialize WebGL canvas on first run
+                        webgl = fx.canvas();
+                        texture = webgl.texture(video);
+                        webgl.replace(glCanvas);
                     }
 
-                    // Once the stream is ready, set up the audio visualizer
+                    if (settingsFolder && !settingsFolder.cameraControlAdded) {
+                        populateCameraControl();
+                        // Also set up native controls on the first valid stream
+                        setupNativeControls();
+                    }
                     setupAudioVisualizer();
-                    
-                    // Start the main rendering loop
-                    lastRenderTime = 0; // Reset frame rate counter for the new stream
+                    lastRenderTime = 0;
                     requestAnimationFrame(renderFrame);
                 };
-
             } catch (err) {
                 console.error("Camera Error:", err);
-                alert(`Could not access camera. Please grant permission and ensure a camera is available. Error: ${err.message}`);
+                alert(`Could not access camera. Error: ${err.message}`);
             }
         }
 
         // --- Overlay Drawing Functions ---
-        /** Draws a rule-of-thirds grid on the canvas. */
         function drawRuleOfThirdsGrid() {
-            const thirdW = canvas.width / 3;
-            const thirdH = canvas.height / 3;
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([5, 3]); // Creates a dashed line effect
-
-            // Draw vertical lines
-            ctx.beginPath();
-            ctx.moveTo(thirdW, 0);
-            ctx.lineTo(thirdW, canvas.height);
-            ctx.moveTo(2 * thirdW, 0);
-            ctx.lineTo(2 * thirdW, canvas.height);
-            ctx.stroke();
-            
-            // Draw horizontal lines
-            ctx.beginPath();
-            ctx.moveTo(0, thirdH);
-            ctx.lineTo(canvas.width, thirdH);
-            ctx.moveTo(0, 2 * thirdH);
-            ctx.lineTo(canvas.width, 2 * thirdH);
-            ctx.stroke();
-            
-            ctx.setLineDash([]); // Reset to solid lines for other drawing operations
+            const w = overlayCanvas.width, h = overlayCanvas.height;
+            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            overlayCtx.lineWidth = 1;
+            overlayCtx.setLineDash([5, 3]);
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(w / 3, 0); overlayCtx.lineTo(w / 3, h);
+            overlayCtx.moveTo(2 * w / 3, 0); overlayCtx.lineTo(2 * w / 3, h);
+            overlayCtx.moveTo(0, h / 3); overlayCtx.lineTo(w, h / 3);
+            overlayCtx.moveTo(0, 2 * h / 3); overlayCtx.lineTo(w, 2 * h / 3);
+            overlayCtx.stroke();
+            overlayCtx.setLineDash([]);
         }
 
-        /** Draws cinematic 2.35:1 crop bars. */
         function drawCropBars() {
-            const targetHeight = canvas.width / 2.35;
-            const barHeight = (canvas.height - targetHeight) / 2;
+            const w = overlayCanvas.width, h = overlayCanvas.height;
+            const targetHeight = w / 2.35;
+            const barHeight = (h - targetHeight) / 2;
             if (barHeight > 0) {
-                ctx.fillStyle = 'black';
-                ctx.fillRect(0, 0, canvas.width, barHeight); // Top bar
-                ctx.fillRect(0, canvas.height - barHeight, canvas.width, barHeight); // Bottom bar
+                overlayCtx.fillStyle = 'black';
+                overlayCtx.fillRect(0, 0, w, barHeight);
+                overlayCtx.fillRect(0, h - barHeight, w, barHeight);
             }
         }
 
         /**
-         * The main rendering loop, called by requestAnimationFrame.
-         * @param {DOMHighResTimeStamp} timestamp - The current time provided by requestAnimationFrame.
+         * Converts a color temperature in Kelvin to an RGB multiplier.
+         * This is a simplified approximation.
+         * @param {number} kelvin - The temperature in Kelvin.
+         * @returns {Array<number>} An array of [r, g, b] multipliers.
          */
-        function renderFrame(timestamp) {
-            requestAnimationFrame(renderFrame); // Schedule the next frame
+        function kelvinToRGB(kelvin) {
+            kelvin = kelvin / 100;
+            let r, g, b;
 
-            // --- Frame Rate Simulation ---
+            // Red component
+            if (kelvin <= 66) {
+                r = 255;
+            } else {
+                r = kelvin - 60;
+                r = 329.698727446 * Math.pow(r, -0.1332047592);
+            }
+
+            // Green component
+            if (kelvin <= 66) {
+                g = kelvin;
+                g = 99.4708025861 * Math.log(g) - 161.1195681661;
+            } else {
+                g = kelvin - 60;
+                g = 288.1221695283 * Math.pow(g, -0.0755148492);
+            }
+
+            // Blue component
+            if (kelvin >= 66) {
+                b = 255;
+            } else {
+                if (kelvin <= 19) {
+                    b = 0;
+                } else {
+                    b = kelvin - 10;
+                    b = 138.5177312231 * Math.log(b) - 305.0447927307;
+                }
+            }
+
+            return [
+                Math.max(0, Math.min(255, r)) / 255,
+                Math.max(0, Math.min(255, g)) / 255,
+                Math.max(0, Math.min(255, b)) / 255
+            ];
+        }
+
+        /** The main rendering loop. */
+        function renderFrame(timestamp) {
+            requestAnimationFrame(renderFrame);
+
             if (PARAMS.frameRate !== 'Native') {
                 const targetInterval = 1000 / Number(PARAMS.frameRate);
                 const elapsed = timestamp - lastRenderTime;
-                if (elapsed < targetInterval) {
-                    return; // Skip rendering this frame to maintain the target FPS
+                if (elapsed < targetInterval) return;
+                lastRenderTime = timestamp - (elapsed % targetInterval);
+            }
+
+            // --- WebGL Render Pass ---
+            if (webgl && texture && video.readyState === video.HAVE_ENOUGH_DATA) {
+                texture.loadContentsOf(video);
+                let node = webgl.draw(texture);
+
+                // Apply filters if their values are not neutral
+                if (PARAMS.exposure !== 0 || PARAMS.contrast !== 0) {
+                    node = node.brightnessContrast(PARAMS.exposure, PARAMS.contrast);
                 }
-                lastRenderTime = timestamp - (elapsed % targetInterval); // Adjust for timing inaccuracies
-            }
-            
-            // --- Apply Video Filters ---
-            // Build the CSS filter string from the PARAMS object
-            const filterString = `
-                brightness(${PARAMS.brightness}%)
-                contrast(${PARAMS.contrast}%)
-                saturate(${PARAMS.saturate}%)
-                grayscale(${PARAMS.grayscale}%)
-                sepia(${PARAMS.sepia}%)
-                invert(${PARAMS.invert}%)
-                hue-rotate(${PARAMS['hue-rotate']}deg)
-            `;
-            ctx.filter = filterString;
+                if (PARAMS.hue !== 0 || PARAMS.saturate !== 0) {
+                    node = node.hueSaturation(PARAMS.hue, PARAMS.saturate);
+                }
+                if (PARAMS.sharpness > 0) {
+                    node = node.unsharpMask(2, PARAMS.sharpness);
+                }
+                if (PARAMS.temperature !== 6500) {
+                    const rgb = kelvinToRGB(PARAMS.temperature);
+                    // Adjust curves based on temperature. This is a creative interpretation.
+                    // Warmer temps boost red/green, cooler temps boost blue.
+                    node = node.curves(
+                        [[0,0], [rgb[0], rgb[0]], [1,1]], // Red
+                        [[0,0], [rgb[1], rgb[1]], [1,1]], // Green
+                        [[0,0], [rgb[2], rgb[2]], [1,1]]  // Blue
+                    );
+                }
+                if (PARAMS.mirror) {
+                    node = node.flip('x');
+                }
 
-            // Draw the video frame to the canvas with the filters and zoom applied
-            if (video.videoWidth > 0) {
-                const sWidth = video.videoWidth / PARAMS.zoom;
-                const sHeight = video.videoHeight / PARAMS.zoom;
-                const sx = (video.videoWidth - sWidth) / 2;
-                const sy = (video.videoHeight - sHeight) / 2;
-                ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+                node.update(); // Final render to canvas
+            }
+
+            // --- 2D Overlay Render Pass ---
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            if (PARAMS.showRuleOfThirds) drawRuleOfThirdsGrid();
+            if (PARAMS.showCropBars) drawCropBars();
+            
+            // --- UI Update ---
+            if (PARAMS.showHistogram) {
+                updateHistogram();
+                histogramCanvas.style.display = 'block';
             } else {
-                // Fallback for when video metadata is not yet loaded
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                histogramCanvas.style.display = 'none';
             }
-            
-            // --- Draw Overlays ---
-            ctx.filter = 'none'; // Reset filters so overlays are not affected
-
-            if (PARAMS.showRuleOfThirds) {
-                drawRuleOfThirdsGrid();
-            }
-            if (PARAMS.showCropBars) {
-                drawCropBars();
-            }
-
-            // --- Update UI ---
             updateAudioVisualizer();
+        }
+
+        /** Reads the WebGL canvas and draws a real-time histogram. */
+        function updateHistogram() {
+            const w = histogramCanvas.width;
+            const h = histogramCanvas.height;
+            const gl = webgl.gl;
+
+            // Read pixels from the WebGL canvas
+            const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+            gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+            const bins = new Uint32Array(256).fill(0);
+            let maxBin = 0;
+
+            // Calculate luminosity and populate bins
+            for (let i = 0; i < pixels.length; i += 4) {
+                // Using standard luminosity calculation
+                const r = pixels[i];
+                const g = pixels[i + 1];
+                const b = pixels[i + 2];
+                const luminosity = Math.round(0.21 * r + 0.72 * g + 0.07 * b);
+                bins[luminosity]++;
+            }
+
+            // Find the max bin value for scaling
+            for (let i = 0; i < 256; i++) {
+                if (bins[i] > maxBin) {
+                    maxBin = bins[i];
+                }
+            }
+
+            // Draw the histogram
+            histogramCtx.clearRect(0, 0, w, h);
+            histogramCtx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            for (let i = 0; i < 256; i++) {
+                const value = (bins[i] / maxBin) * h;
+                histogramCtx.fillRect(i * (w / 256), h - value, (w / 256), value);
+            }
         }
 
         // --- Audio Analysis ---
@@ -593,16 +722,28 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
 
             // Photo Capture
             photoButton.addEventListener('click', () => {
-                // Get image data from the canvas (with all filters and overlays)
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                // Create a temporary canvas to composite the WebGL and overlay canvases
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                const w = webgl.canvas.width;
+                const h = webgl.canvas.height;
+                tempCanvas.width = w;
+                tempCanvas.height = h;
+
+                // 1. Draw the WebGL canvas content
+                tempCtx.drawImage(webgl.canvas, 0, 0, w, h);
+
+                // 2. Draw the 2D overlay canvas on top
+                tempCtx.drawImage(overlayCanvas, 0, 0, w, h);
+
+                // 3. Get the final image data
+                const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.9);
                 
                 // Create a temporary link to trigger the download
                 const link = document.createElement('a');
                 link.href = dataUrl;
                 link.download = `CineCamPro_Capture_${Date.now()}.jpg`;
-                document.body.appendChild(link);
                 link.click();
-                document.body.removeChild(link);
             });
 
             // Video Recording
