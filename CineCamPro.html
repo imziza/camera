@@ -1,0 +1,639 @@
+<!--
+CineCam Pro - A fully functional, single-file HTML5 web app for mobile and desktop.
+Features: Live video filters, manual camera controls, cinematic presets, photo/video capture, and more.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Meta tags for character set, viewport, and compatibility -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>CineCam Pro</title>
+
+    <!-- Google Fonts: Poppins -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- Tweakpane Library for UI controls -->
+    <script src="https://cdn.jsdelivr.net/npm/tweakpane@3.1.0/dist/tweakpane.min.js"></script>
+
+    <style>
+        /* --- CSS Variables and Theming --- */
+        :root {
+            --background-color: #1a1a1a;
+            --text-color: #f0f0f0;
+            --primary-color: #00aaff;
+            --surface-color: #2a2a2a;
+            --border-color: #444;
+        }
+
+        body.light-mode {
+            --background-color: #f0f0f0;
+            --text-color: #1a1a1a;
+            --primary-color: #0077cc;
+            --surface-color: #ffffff;
+            --border-color: #ccc;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        h1 {
+            display: none; /* Hide title on app screen for more space */
+        }
+
+        /* --- App Layout (Mobile First) --- */
+        #app-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+        }
+
+        #video-preview {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 'contain' is better for seeing the whole frame */
+        }
+
+        #video-source {
+            display: none; /* The raw video source is never shown to the user */
+        }
+
+        #controls-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(26, 26, 26, 0.9);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            overflow-y: auto;
+            z-index: 20;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease-in-out;
+        }
+
+        #controls-container.visible {
+            transform: translateX(0);
+        }
+
+        /* --- UI Overlay Elements --- */
+        .ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allow clicks to pass through to video */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .top-bar, .bottom-bar {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: all; /* Make elements in bars clickable */
+        }
+
+        .top-bar {
+            justify-content: flex-end; /* Push controls button to the right */
+        }
+
+        #capture-container {
+            display: flex;
+            gap: 15px;
+        }
+
+        #audio-visualizer {
+            width: 150px;
+            height: 20px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        #audio-level {
+            width: 0%;
+            height: 100%;
+            background-color: var(--primary-color);
+            border-radius: 4px;
+            transition: width 0.05s linear;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        #controls-toggle-button {
+            background-color: rgba(0,0,0,0.5);
+            border: 1px solid var(--border-color);
+        }
+
+        button:hover {
+            background-color: #0088cc;
+        }
+
+        /* --- Desktop Layout --- */
+        @media (min-width: 768px) {
+            h1 {
+                display: block; /* Show title on desktop */
+            }
+            #app-container {
+                width: 100%;
+                max-width: 1200px;
+                height: auto;
+                aspect-ratio: 16 / 9;
+                margin: 20px;
+                border-radius: 12px;
+                overflow: hidden;
+            }
+            #controls-container {
+                transform: translateX(0);
+                position: absolute;
+                top: 0;
+                right: 0;
+                left: auto;
+                width: 300px;
+                height: 100%;
+                box-shadow: -5px 0 15px rgba(0,0,0,0.2);
+            }
+            #controls-toggle-button {
+                display: none; /* Hide toggle button on desktop */
+            }
+            .ui-overlay {
+                padding: 30px;
+            }
+             #capture-container {
+                position: absolute;
+                bottom: 30px;
+                left: 50%;
+                transform: translateX(-50%);
+            }
+            .bottom-bar {
+                justify-content: center;
+            }
+            #audio-visualizer, .bottom-bar > div:last-child {
+                display: none; /* Hide spacer and visualizer on desktop for a cleaner look */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <!-- The hidden video element that receives the raw camera feed -->
+        <video id="video-source" autoplay playsinline></video>
+
+        <!-- The canvas where the video is rendered with effects -->
+        <canvas id="video-preview"></canvas>
+
+        <!-- Container for Tweakpane UI controls, slides in from the side -->
+        <div id="controls-container"></div>
+
+        <!-- Overlay for UI elements that sit on top of the video -->
+        <div class="ui-overlay">
+            <div class="top-bar">
+                <button id="controls-toggle-button">Controls</button>
+            </div>
+            <div class="bottom-bar">
+                 <div id="audio-visualizer">
+                    <div id="audio-level"></div>
+                </div>
+                <div id="capture-container">
+                    <button id="capture-photo">Photo</button>
+                    <button id="record-video">Record</button>
+                </div>
+                <!-- Empty div for spacing -->
+                <div style="width: 150px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container for generated download links, appears below the main app -->
+    <div id="download-links"></div>
+
+    <script>
+        // --- DOM Elements ---
+        const video = document.getElementById('video-source');
+        const canvas = document.getElementById('video-preview');
+        const ctx = canvas.getContext('2d');
+        const controlsContainer = document.getElementById('controls-container');
+        const controlsToggleButton = document.getElementById('controls-toggle-button');
+
+        // --- State ---
+        let stream;
+        let audioContext, analyser, dataArray;
+        const PRESETS = {
+            'None': { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, invert: 0, 'hue-rotate': 0 },
+            'Teal & Orange': { brightness: 105, contrast: 115, saturate: 120, sepia: 15, grayscale: 0, invert: 0, 'hue-rotate': -10 },
+            'Vintage Film': { brightness: 110, contrast: 95, saturate: 85, sepia: 45, grayscale: 0, invert: 0, 'hue-rotate': 0 },
+            'Noir': { brightness: 110, contrast: 140, saturate: 0, sepia: 0, grayscale: 100, invert: 0, 'hue-rotate': 0 },
+            'Lomograph': { brightness: 100, contrast: 140, saturate: 140, sepia: 10, grayscale: 0, invert: 0, 'hue-rotate': 5 },
+        };
+        const RESOLUTIONS = {
+            '720p': { width: 1280, height: 720 },
+            '1080p': { width: 1920, height: 1080 },
+            '4K': { width: 3840, height: 2160 },
+        };
+        const PARAMS = {
+            ...PRESETS['None'],
+            showCropBars: false,
+            showRuleOfThirds: true,
+            darkMode: true,
+            resolution: '1080p',
+            frameRate: 'Native',
+        };
+
+        // --- UI Initialization ---
+        /**
+         * Sets up the Tweakpane control panel with all the sliders, toggles, and buttons.
+         */
+        function setupControls() {
+            // Initialize Tweakpane for the main control panel
+            const pane = new Tweakpane.Pane({
+                container: document.getElementById('controls-container'),
+                title: 'CineCam Pro Controls',
+            });
+
+            // Folder for preset cinematic looks
+            const presetFolder = pane.addFolder({ title: 'Cinematic Presets', expanded: true });
+            const presetControl = presetFolder.addInput({ preset: 'None' }, 'preset', {
+                options: Object.keys(PRESETS).map(name => ({ text: name, value: name })),
+            });
+
+            presetControl.on('change', (ev) => {
+                const preset = PRESETS[ev.value];
+                if (preset) {
+                    // Update the PARAMS object with the values from the selected preset
+                    Object.keys(preset).forEach(key => {
+                        PARAMS[key] = preset[key];
+                    });
+                    // Refresh the Tweakpane UI to show the new values in the sliders
+                    pane.refresh();
+                }
+            });
+
+            // Folder for manual image adjustments
+            const manualFolder = pane.addFolder({ title: 'Manual Controls' });
+            manualFolder.addInput(PARAMS, 'brightness', { min: 0, max: 200, step: 1, label: 'Brightness (%)' });
+            manualFolder.addInput(PARAMS, 'contrast', { min: 0, max: 200, step: 1, label: 'Contrast (%)' });
+            manualFolder.addInput(PARAMS, 'saturate', { min: 0, max: 200, step: 1, label: 'Saturation (%)' });
+            manualFolder.addInput(PARAMS, 'hue-rotate', { min: 0, max: 360, step: 1, label: 'Hue (deg)' });
+
+            // Folder for simple color filters
+            const filterFolder = pane.addFolder({ title: 'Color Filters' });
+            filterFolder.addInput(PARAMS, 'sepia', { min: 0, max: 100, step: 1, label: 'Sepia (%)' });
+            filterFolder.addInput(PARAMS, 'grayscale', { min: 0, max: 100, step: 1, label: 'Grayscale (%)' });
+            filterFolder.addInput(PARAMS, 'invert', { min: 0, max: 100, step: 1, label: 'Invert (%)' });
+
+            // Folder for guides and overlays
+            const overlayFolder = pane.addFolder({ title: 'Visual Guides' });
+            overlayFolder.addInput(PARAMS, 'showCropBars', { label: 'Cinematic Bars (2.35:1)' });
+            overlayFolder.addInput(PARAMS, 'showRuleOfThirds', { label: 'Rule of Thirds Grid' });
+
+            // Folder for app settings like resolution and theme
+            const settingsFolder = pane.addFolder({ title: 'Settings' });
+            settingsFolder.addInput(PARAMS, 'darkMode', { label: 'Dark Mode' }).on('change', (ev) => {
+                // Toggles the 'light-mode' class on the body
+                document.body.classList.toggle('light-mode', !ev.value);
+            });
+
+            settingsFolder.addInput(PARAMS, 'resolution', {
+                label: 'Resolution',
+                options: Object.keys(RESOLUTIONS).map(r => ({ text: r, value: r })),
+            }).on('change', (ev) => {
+                // When resolution changes, we must stop the old stream and start a new one
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                setupCamera(RESOLUTIONS[ev.value]);
+            });
+
+            settingsFolder.addInput(PARAMS, 'frameRate', {
+                label: 'Frame Rate',
+                options: [
+                    { text: 'Native', value: 'Native' },
+                    { text: '30 fps', value: '30' },
+                    { text: '24 fps', value: '24' },
+                ]
+            });
+        }
+
+        /**
+         * Initializes the camera stream.
+         * @param {object} constraints - The desired video resolution constraints.
+         */
+        async function setupCamera(constraints = RESOLUTIONS['1080p']) {
+            try {
+                const videoConstraints = {
+                    width: { ideal: constraints.width },
+                    height: { ideal: constraints.height },
+                    facingMode: 'environment' // Prefer the rear camera for better quality
+                };
+
+                // Request camera and microphone access from the browser
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: videoConstraints,
+                    audio: true // Also capture audio for recording and visualization
+                });
+
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    // Match canvas dimensions to the actual video stream dimensions
+                    const streamSettings = stream.getVideoTracks()[0].getSettings();
+                    canvas.width = streamSettings.width;
+                    canvas.height = streamSettings.height;
+
+                    // Once the stream is ready, set up the audio visualizer
+                    setupAudioVisualizer();
+
+                    // Start the main rendering loop
+                    requestAnimationFrame(renderFrame);
+                };
+
+            } catch (err) {
+                console.error("Camera Error:", err);
+                alert(`Could not access camera. Please grant permission and ensure a camera is available. Error: ${err.message}`);
+            }
+        }
+
+        // --- Overlay Drawing Functions ---
+        /** Draws a rule-of-thirds grid on the canvas. */
+        function drawRuleOfThirdsGrid() {
+            const thirdW = canvas.width / 3;
+            const thirdH = canvas.height / 3;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 3]); // Creates a dashed line effect
+
+            // Draw vertical lines
+            ctx.beginPath();
+            ctx.moveTo(thirdW, 0);
+            ctx.lineTo(thirdW, canvas.height);
+            ctx.moveTo(2 * thirdW, 0);
+            ctx.lineTo(2 * thirdW, canvas.height);
+            ctx.stroke();
+
+            // Draw horizontal lines
+            ctx.beginPath();
+            ctx.moveTo(0, thirdH);
+            ctx.lineTo(canvas.width, thirdH);
+            ctx.moveTo(0, 2 * thirdH);
+            ctx.lineTo(canvas.width, 2 * thirdH);
+            ctx.stroke();
+
+            ctx.setLineDash([]); // Reset to solid lines for other drawing operations
+        }
+
+        /** Draws cinematic 2.35:1 crop bars. */
+        function drawCropBars() {
+            const targetHeight = canvas.width / 2.35;
+            const barHeight = (canvas.height - targetHeight) / 2;
+            if (barHeight > 0) {
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, canvas.width, barHeight); // Top bar
+                ctx.fillRect(0, canvas.height - barHeight, canvas.width, barHeight); // Bottom bar
+            }
+        }
+
+        /**
+         * The main rendering loop, called by requestAnimationFrame.
+         * @param {DOMHighResTimeStamp} timestamp - The current time provided by requestAnimationFrame.
+         */
+        function renderFrame(timestamp) {
+            requestAnimationFrame(renderFrame); // Schedule the next frame
+
+            // --- Frame Rate Simulation ---
+            if (PARAMS.frameRate !== 'Native') {
+                const targetInterval = 1000 / Number(PARAMS.frameRate);
+                const elapsed = timestamp - lastRenderTime;
+                if (elapsed < targetInterval) {
+                    return; // Skip rendering this frame to maintain the target FPS
+                }
+                lastRenderTime = timestamp - (elapsed % targetInterval); // Adjust for timing inaccuracies
+            }
+
+            // --- Apply Video Filters ---
+            // Build the CSS filter string from the PARAMS object
+            const filterString = `
+                brightness(${PARAMS.brightness}%)
+                contrast(${PARAMS.contrast}%)
+                saturate(${PARAMS.saturate}%)
+                grayscale(${PARAMS.grayscale}%)
+                sepia(${PARAMS.sepia}%)
+                invert(${PARAMS.invert}%)
+                hue-rotate(${PARAMS['hue-rotate']}deg)
+            `;
+            ctx.filter = filterString;
+
+            // Draw the video frame to the canvas with the filters applied
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // --- Draw Overlays ---
+            ctx.filter = 'none'; // Reset filters so overlays are not affected
+
+            if (PARAMS.showRuleOfThirds) {
+                drawRuleOfThirdsGrid();
+            }
+            if (PARAMS.showCropBars) {
+                drawCropBars();
+            }
+
+            // --- Update UI ---
+            updateAudioVisualizer();
+        }
+
+        // --- Audio Analysis ---
+        /** Sets up the Web Audio API to analyze microphone input. */
+        function setupAudioVisualizer() {
+            if (!stream.getAudioTracks().length) {
+                console.warn("Audio track not available, visualizer disabled.");
+                return;
+            }
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser); // Connect the microphone source to the analyzer
+
+            analyser.fftSize = 256;
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+        }
+
+        /** Analyzes audio data and updates the visualizer bar. */
+        function updateAudioVisualizer() {
+            if (!analyser) return;
+
+            analyser.getByteFrequencyData(dataArray); // Get frequency data
+
+            let sum = 0;
+            for (const amplitude of dataArray) {
+                sum += amplitude;
+            }
+            const average = sum / dataArray.length;
+            // Normalize and scale the volume for better visualization
+            const volumePercent = (average / 255) * 150;
+
+            const audioLevelEl = document.getElementById('audio-level');
+            if (audioLevelEl) {
+                audioLevelEl.style.width = `${Math.min(100, volumePercent)}%`;
+            }
+        }
+
+        // --- Media Capture State ---
+        let mediaRecorder; // The MediaRecorder instance
+        let recordedChunks = []; // Array to store recorded video chunks
+        let isRecording = false; // Flag to track recording status
+
+        // --- Capture & Recording Setup ---
+        /** Sets up event listeners for photo and video capture buttons. */
+        function setupMediaButtons() {
+            const photoButton = document.getElementById('capture-photo');
+            const recordButton = document.getElementById('record-video');
+            const downloadLinksContainer = document.getElementById('download-links');
+
+            // Photo Capture
+            photoButton.addEventListener('click', () => {
+                // Get image data from the canvas (with all filters and overlays)
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+                // Create a temporary link to trigger the download
+                const link = document.createElement('a');
+                link.href = dataUrl;
+                link.download = `CineCamPro_Capture_${Date.now()}.jpg`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            });
+
+            // Video Recording
+            recordButton.addEventListener('click', () => {
+                if (isRecording) {
+                    // --- Stop Recording ---
+                    mediaRecorder.stop();
+                    recordButton.textContent = 'Start Recording';
+                    recordButton.style.backgroundColor = ''; // Revert to default color
+                    isRecording = false;
+                } else {
+                    // --- Start Recording ---
+                    startRecording();
+                    recordButton.textContent = 'Stop Recording';
+                    recordButton.style.backgroundColor = '#ff4136'; // Use red to indicate recording
+                    isRecording = true;
+                }
+            });
+
+            /** Initializes and starts the video recording process. */
+            function startRecording() {
+                recordedChunks = [];
+                // Get a video stream from the canvas (includes all visual effects)
+                const canvasStream = canvas.captureStream(30); // Record at 30 FPS
+
+                // Get the audio track from the original microphone stream
+                const audioTracks = stream.getAudioTracks();
+
+                // Combine the canvas video and microphone audio into one stream
+                const combinedStream = new MediaStream([
+                    ...canvasStream.getVideoTracks(),
+                    ...audioTracks
+                ]);
+
+                // Create and configure the MediaRecorder
+                mediaRecorder = new MediaRecorder(combinedStream, {
+                    mimeType: 'video/webm; codecs=vp9,opus' // Use a modern, high-quality codec
+                });
+
+                // Event handler for when data is available
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+
+                // Event handler for when recording is stopped
+                mediaRecorder.onstop = () => {
+                    // Combine all recorded chunks into a single Blob
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+
+                    // Create a download link for the recorded video
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `CineCamPro_Recording_${Date.now()}.webm`;
+                    link.textContent = `Download Video (${(blob.size / 1024 / 1024).toFixed(2)} MB)`;
+                    link.style.display = 'block';
+                    link.style.margin = '10px';
+                    downloadLinksContainer.appendChild(link);
+                };
+
+                mediaRecorder.start(); // Start recording
+            }
+        }
+
+        // --- Application Entry Point ---
+        /**
+         * Main initializer that runs when the DOM is fully loaded.
+         */
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set the initial theme based on the PARAMS default
+            document.body.classList.toggle('light-mode', !PARAMS.darkMode);
+
+            // Set up the UI controls panel
+            setupControls();
+
+            // Set up media capture buttons
+            setupMediaButtons();
+
+            // Set up the mobile controls toggle button
+            controlsToggleButton.addEventListener('click', () => {
+                controlsContainer.classList.toggle('visible');
+            });
+
+            // Hide controls panel when clicking outside of it on mobile
+            canvas.addEventListener('click', () => {
+                if (controlsContainer.classList.contains('visible')) {
+                    controlsContainer.classList.remove('visible');
+                }
+            });
+
+            // Initialize the camera
+            setupCamera(RESOLUTIONS[PARAMS.resolution]);
+        });
+    </script>
+
+</body>
+</html>
