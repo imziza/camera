@@ -256,6 +256,9 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
         // --- State ---
         let stream;
         let audioContext, analyser, dataArray;
+        let pane, settingsFolder; // Make pane and settings folder globally accessible
+        let lastRenderTime = 0; // For frame rate simulation
+
         const PRESETS = {
             'None': { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, invert: 0, 'hue-rotate': 0 },
             'Teal & Orange': { brightness: 105, contrast: 115, saturate: 120, sepia: 15, grayscale: 0, invert: 0, 'hue-rotate': -10 },
@@ -269,6 +272,8 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             '4K': { width: 3840, height: 2160 },
         };
         const PARAMS = { 
+            zoom: 1,
+            deviceId: 'default',
             ...PRESETS['None'],
             showCropBars: false,
             showRuleOfThirds: true,
@@ -283,7 +288,7 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
          */
         function setupControls() {
             // Initialize Tweakpane for the main control panel
-            const pane = new Tweakpane.Pane({
+            pane = new Tweakpane.Pane({
                 container: document.getElementById('controls-container'),
                 title: 'CineCam Pro Controls',
             });
@@ -308,6 +313,7 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
 
             // Folder for manual image adjustments
             const manualFolder = pane.addFolder({ title: 'Manual Controls' });
+            manualFolder.addInput(PARAMS, 'zoom', { min: 1, max: 4, step: 0.1, label: 'Zoom' });
             manualFolder.addInput(PARAMS, 'brightness', { min: 0, max: 200, step: 1, label: 'Brightness (%)' });
             manualFolder.addInput(PARAMS, 'contrast', { min: 0, max: 200, step: 1, label: 'Contrast (%)' });
             manualFolder.addInput(PARAMS, 'saturate', { min: 0, max: 200, step: 1, label: 'Saturation (%)' });
@@ -325,7 +331,7 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             overlayFolder.addInput(PARAMS, 'showRuleOfThirds', { label: 'Rule of Thirds Grid' });
 
             // Folder for app settings like resolution and theme
-            const settingsFolder = pane.addFolder({ title: 'Settings' });
+            settingsFolder = pane.addFolder({ title: 'Settings' });
             settingsFolder.addInput(PARAMS, 'darkMode', { label: 'Dark Mode' }).on('change', (ev) => {
                 // Toggles the 'light-mode' class on the body
                 document.body.classList.toggle('light-mode', !ev.value);
@@ -352,17 +358,61 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             });
         }
 
+        /** Populates the camera selection dropdown once permissions are granted. */
+        async function populateCameraControl() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                // Only add the control if there's more than one camera
+                if (videoDevices.length > 1 && settingsFolder) {
+                    const cameraOptions = videoDevices.map(device => ({
+                        text: device.label || `Camera ${videoDevices.indexOf(device) + 1}`,
+                        value: device.deviceId
+                    }));
+
+                    cameraOptions.unshift({ text: 'Default', value: 'default' });
+
+                    const cameraControl = settingsFolder.addInput(PARAMS, 'deviceId', {
+                        label: 'Camera',
+                        options: cameraOptions,
+                    });
+
+                    cameraControl.on('change', () => {
+                        // Re-initialize the camera with the new device ID
+                        setupCamera(RESOLUTIONS[PARAMS.resolution]);
+                    });
+
+                    // Add a flag to prevent this control from being added multiple times
+                    settingsFolder.cameraControlAdded = true;
+                }
+            } catch (err) {
+                console.warn("Could not populate camera list.", err);
+            }
+        }
+
         /**
          * Initializes the camera stream.
          * @param {object} constraints - The desired video resolution constraints.
          */
         async function setupCamera(constraints = RESOLUTIONS['1080p']) {
+            // Stop any existing stream before starting a new one.
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
             try {
                 const videoConstraints = {
                     width: { ideal: constraints.width },
                     height: { ideal: constraints.height },
-                    facingMode: 'environment' // Prefer the rear camera for better quality
                 };
+
+                // If a specific device is selected, use its ID. Otherwise, use the default facingMode.
+                if (PARAMS.deviceId && PARAMS.deviceId !== 'default') {
+                    videoConstraints.deviceId = { exact: PARAMS.deviceId };
+                } else {
+                    videoConstraints.facingMode = 'environment'; // Prefer the rear camera
+                }
 
                 // Request camera and microphone access from the browser
                 stream = await navigator.mediaDevices.getUserMedia({
@@ -378,10 +428,16 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
                     canvas.width = streamSettings.width;
                     canvas.height = streamSettings.height;
 
+                    // Populate the camera control dropdown if it hasn't been already
+                    if (settingsFolder && !settingsFolder.cameraControlAdded) {
+                        populateCameraControl();
+                    }
+
                     // Once the stream is ready, set up the audio visualizer
                     setupAudioVisualizer();
                     
                     // Start the main rendering loop
+                    lastRenderTime = 0; // Reset frame rate counter for the new stream
                     requestAnimationFrame(renderFrame);
                 };
 
@@ -460,8 +516,17 @@ Features: Live video filters, manual camera controls, cinematic presets, photo/v
             `;
             ctx.filter = filterString;
 
-            // Draw the video frame to the canvas with the filters applied
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // Draw the video frame to the canvas with the filters and zoom applied
+            if (video.videoWidth > 0) {
+                const sWidth = video.videoWidth / PARAMS.zoom;
+                const sHeight = video.videoHeight / PARAMS.zoom;
+                const sx = (video.videoWidth - sWidth) / 2;
+                const sy = (video.videoHeight - sHeight) / 2;
+                ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+            } else {
+                // Fallback for when video metadata is not yet loaded
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
             
             // --- Draw Overlays ---
             ctx.filter = 'none'; // Reset filters so overlays are not affected
