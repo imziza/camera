@@ -1,845 +1,538 @@
-<!--
-CineCam Pro - A fully functional, single-file HTML5 web app for mobile and desktop.
-Features: Live video filters, manual camera controls, cinematic presets, photo/video capture, and more.
--->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Meta tags for character set, viewport, and compatibility -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>CineCam Pro</title>
-
-    <!-- Google Fonts: Poppins -->
+    <title>CineCam Pro (Next Gen)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-    
-    <!-- Tweakpane Library for UI controls -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/tweakpane@3.1.0/dist/tweakpane.min.js"></script>
-    
-    <!-- glfx.js for WebGL-based filter effects -->
-    <script src="https://cdn.jsdelivr.net/npm/glfx@1.1.2/glfx.min.js"></script>
-
     <style>
-        /* --- CSS Variables and Theming --- */
         :root {
-            --background-color: #1a1a1a;
-            --text-color: #f0f0f0;
-            --primary-color: #00aaff;
-            --surface-color: #2a2a2a;
-            --border-color: #444;
+            --bg: #111;
+            --surface: #1d1d1d;
+            --primary: #269dff;
+            --text: #f0f0f0;
+            --border: #333;
         }
-
-        body.light-mode {
-            --background-color: #f0f0f0;
-            --text-color: #1a1a1a;
-            --primary-color: #0077cc;
-            --surface-color: #ffffff;
-            --border-color: #ccc;
-        }
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background-color: var(--background-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 0;
+        #cinematic-bars {
+            position: absolute;
+            width: 100%;
+            height: 100%;
             display: flex;
             flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+        #cinematic-bars .bar {
+            background: black;
+            width: 100%;
+            height: 0; /* Controlled by JS */
+            transition: height 0.3s ease;
+        }
+        #ui-buttons {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 100;
+        }
+        #ui-buttons button {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 16px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+        }
+        #ui-buttons button.recording {
+            background: #e74c3c;
+            border-color: #c0392b;
+        }
+        body {
+            margin: 0;
+            height: 100vh;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            display: flex;
             align-items: center;
             justify-content: center;
-            height: 100vh;
-            width: 100vw;
             overflow: hidden;
         }
-
-        h1 {
-            display: none; /* Hide title on app screen for more space */
-        }
-
-        /* --- App Layout (Mobile First) --- */
-        #app-container {
+        main {
             position: relative;
             width: 100%;
             height: 100%;
             display: flex;
+            align-items: center;
             justify-content: center;
-            align-items: center;
-            background: black;
         }
-
-        #video-preview, #overlay-canvas {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+        canvas#display {
             width: 100%;
             height: 100%;
-            object-fit: contain; /* 'contain' is better for seeing the whole frame */
+            object-fit: contain;
         }
-        
-        #overlay-canvas {
-            z-index: 10;
-        }
-
-        #histogram-canvas {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            width: 256px;
-            height: 100px;
-            background-color: rgba(0, 0, 0, 0.5);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            z-index: 30; /* Above other overlays */
-        }
-
-        #video-source {
-            display: none; /* The raw video source is never shown to the user */
-        }
-
-        #controls-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(26, 26, 26, 0.9);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            overflow-y: auto;
-            z-index: 20;
-            transform: translateX(-100%);
-            transition: transform 0.3s ease-in-out;
-        }
-
-        #controls-container.visible {
-            transform: translateX(0);
-        }
-        
-        /* --- UI Overlay Elements --- */
-        .ui-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none; /* Allow clicks to pass through to video */
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-
-        .top-bar, .bottom-bar {
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            pointer-events: all; /* Make elements in bars clickable */
-        }
-
-        .top-bar {
-            justify-content: flex-end; /* Push controls button to the right */
-        }
-
-        #capture-container {
-            display: flex;
-            gap: 15px;
-        }
-
-        #audio-visualizer {
-            width: 150px;
-            height: 20px;
-            background-color: rgba(0, 0, 0, 0.5);
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            overflow: hidden;
-        }
-
-        #audio-level {
-            width: 0%;
-            height: 100%;
-            background-color: var(--primary-color);
-            border-radius: 4px;
-            transition: width 0.05s linear;
-        }
-
-        button {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-family: 'Poppins', sans-serif;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
-
-        #controls-toggle-button {
-            background-color: rgba(0,0,0,0.5);
-            border: 1px solid var(--border-color);
-        }
-
-        button:hover {
-            background-color: #0088cc;
-        }
-
-        /* --- Desktop Layout --- */
-        @media (min-width: 768px) {
-            h1 {
-                display: block; /* Show title on desktop */
-            }
-            #app-container {
-                width: 100%;
-                max-width: 1200px;
-                height: auto;
-                aspect-ratio: 16 / 9;
-                margin: 20px;
-                border-radius: 12px;
-                overflow: hidden;
-            }
-            #controls-container {
-                transform: translateX(0);
-                position: absolute;
-                top: 0;
-                right: 0;
-                left: auto;
-                width: 300px;
-                height: 100%;
-                box-shadow: -5px 0 15px rgba(0,0,0,0.2);
-            }
-            #controls-toggle-button {
-                display: none; /* Hide toggle button on desktop */
-            }
-            .ui-overlay {
-                padding: 30px;
-            }
-             #capture-container {
-                position: absolute;
-                bottom: 30px;
-                left: 50%;
-                transform: translateX(-50%);
-            }
-            .bottom-bar {
-                justify-content: center;
-            }
-            #audio-visualizer, .bottom-bar > div:last-child {
-                display: none; /* Hide spacer and visualizer on desktop for a cleaner look */
-            }
+        .tp-dfwv { /* Tweakpane custom class */
+            width: 300px !important;
+            position: absolute !important;
+            right: 20px;
+            top: 20px;
         }
     </style>
 </head>
 <body>
-    <div id="app-container">
-        <!-- The hidden video element that receives the raw camera feed -->
-        <video id="video-source" autoplay playsinline></video>
-        
-        <!-- The WebGL canvas where the video is rendered with effects -->
-        <canvas id="video-preview"></canvas>
-        <!-- The 2D canvas for drawing UI overlays like grids and guides -->
-        <canvas id="overlay-canvas"></canvas>
-        <!-- The canvas for displaying the real-time histogram -->
-        <canvas id="histogram-canvas"></canvas>
-
-        <!-- Container for Tweakpane UI controls, slides in from the side -->
-        <div id="controls-container"></div>
-
-        <!-- Overlay for UI elements that sit on top of the video -->
-        <div class="ui-overlay">
-            <div class="top-bar">
-                <button id="controls-toggle-button">Controls</button>
-            </div>
-            <div class="bottom-bar">
-                 <div id="audio-visualizer">
-                    <div id="audio-level"></div>
-                </div>
-                <div id="capture-container">
-                    <button id="capture-photo">Photo</button>
-                    <button id="record-video">Record</button>
-                </div>
-                <!-- Empty div for spacing -->
-                <div style="width: 150px;"></div>
-            </div>
+    <main>
+        <canvas id="display"></canvas>
+        <div id="cinematic-bars">
+            <div class="bar"></div>
+            <div class="bar"></div>
         </div>
-    </div>
-    
-    <!-- Container for generated download links, appears below the main app -->
-    <div id="download-links"></div>
+        <div id="ui-buttons">
+            <button id="capture-photo">Capture</button>
+            <button id="record-video">Record</button>
+        </div>
+        <video id="video-source" autoplay playsinline muted style="display:none;"></video>
+    </main>
 
-    <script>
-        // --- DOM Elements ---
-        const video = document.getElementById('video-source');
-        const glCanvas = document.getElementById('video-preview');
-        const overlayCanvas = document.getElementById('overlay-canvas');
-        const overlayCtx = overlayCanvas.getContext('2d');
-        const histogramCanvas = document.getElementById('histogram-canvas');
-        const histogramCtx = histogramCanvas.getContext('2d');
-        const controlsContainer = document.getElementById('controls-container');
-        const controlsToggleButton = document.getElementById('controls-toggle-button');
+    <!--
+      This is a ground-up rewrite focusing on a robust, creative, and efficient architecture.
+      All logic is encapsulated in the `VirtualCamera` class.
+      Shaders are embedded directly for maximum control and performance.
+    -->
 
-        // --- State ---
-        let stream;
-        let audioContext, analyser, dataArray;
-        let pane, settingsFolder; // Make pane and settings folder globally accessible
-        let lastRenderTime = 0; // For frame rate simulation
-        let webgl, texture; // For WebGL rendering
+    <!-- =========== SHADERS =========== -->
+    <!-- Vertex Shader: Positions the video frame -->
+    <script id="vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        void main() {
+            gl_Position = vec4(a_position, 0, 1);
+            v_texCoord = a_texCoord;
+        }
+    </script>
 
-        const PRESETS = {
-            'None': { brightness: 0, contrast: 0, saturate: 0, sepia: 0, hue: 0 },
-            'Teal & Orange': { brightness: 0.05, contrast: 0.1, saturate: 0.2, sepia: 0.1, hue: -0.05 },
-            'Vintage Film': { brightness: 0.1, contrast: -0.05, saturate: -0.15, sepia: 0.3, hue: 0 },
-            'Noir': { brightness: 0.1, contrast: 0.2, saturate: -1, sepia: 0, hue: 0 },
-            'Lomograph': { brightness: 0, contrast: 0.15, saturate: 0.15, sepia: 0.05, hue: 0.02 },
-        };
-        const RESOLUTIONS = {
-            '720p': { width: 1280, height: 720 },
-            '1080p': { width: 1920, height: 1080 },
-            '4K': { width: 3840, height: 2160 },
-        };
-        const PARAMS = { 
-            zoom: 1,
-            deviceId: 'default',
-            // --- WebGL Shader Params ---
-            brightness: 0,
-            contrast: 0,
-            saturate: 0,
-            hue: 0,
-            sepia: 0,
-            sharpness: 0,
-            exposure: 0,
-            temperature: 6500, // In Kelvin, 6500 is neutral
-            // --- Overlay & App Params ---
-            showCropBars: false,
-            showRuleOfThirds: true,
-            showHistogram: false,
-            mirror: false,
-            darkMode: true,
-            resolution: '1080p',
-            frameRate: 'Native',
-        };
+    <!-- Fragment Shader: The "Uber" shader for all visual effects -->
+    <script id="fragment-shader" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec2 v_texCoord;
+        uniform sampler2D u_texture;
 
-        // --- UI Initialization ---
-        /**
-         * Sets up the Tweakpane control panel with all the sliders, toggles, and buttons.
-         */
-        function setupControls() {
-            pane = new Tweakpane.Pane({
-                container: document.getElementById('controls-container'),
-                title: 'CineCam Pro Controls',
-            });
+        // Effect Parameters
+        uniform float u_contrast;
+        uniform float u_exposure;
+        uniform float u_saturation;
+        uniform float u_sharpness;
+        uniform float u_temperature;
+        uniform float u_tint;
+        uniform bool u_cinematicLook;
+        uniform vec2 u_resolution;
 
-            // --- Cinematic Presets ---
-            const presetFolder = pane.addFolder({ title: 'Cinematic Presets' });
-            presetFolder.addInput({ preset: 'None' }, 'preset', {
-                options: Object.keys(PRESETS).map(name => ({ text: name, value: name })),
-            }).on('change', (ev) => {
-                const preset = PRESETS[ev.value];
-                if (preset) {
-                    // Update the PARAMS object with the values from the selected preset
-                    Object.keys(preset).forEach(key => {
-                        if (key in PARAMS) PARAMS[key] = preset[key];
-                    });
-                    // Refresh the Tweakpane UI to show the new values
-                    pane.refresh();
-                }
-            });
-
-            // --- Manual Shader Controls ---
-            const manualFolder = pane.addFolder({ title: 'Manual Controls', expanded: true });
-            manualFolder.addInput(PARAMS, 'exposure', { min: -1, max: 1, step: 0.05, label: 'Exposure' });
-            manualFolder.addInput(PARAMS, 'contrast', { min: -1, max: 1, step: 0.05, label: 'Contrast' });
-            manualFolder.addInput(PARAMS, 'saturate', { min: -1, max: 1, step: 0.05, label: 'Saturation' });
-            manualFolder.addInput(PARAMS, 'temperature', { min: 2000, max: 10000, step: 100, label: 'Temp (K)' });
-            manualFolder.addInput(PARAMS, 'sharpness', { min: 0, max: 5, step: 0.1, label: 'Sharpness' });
-
-            // Folder for guides and overlays
-            const overlayFolder = pane.addFolder({ title: 'Visual Guides' });
-            overlayFolder.addInput(PARAMS, 'showCropBars', { label: 'Cinematic Bars (2.35:1)' });
-            overlayFolder.addInput(PARAMS, 'showRuleOfThirds', { label: 'Rule of Thirds Grid' });
-            overlayFolder.addInput(PARAMS, 'showHistogram', { label: 'Histogram' });
-            overlayFolder.addInput(PARAMS, 'mirror', { label: 'Mirror Video' });
-
-            // Folder for app settings like resolution and theme
-            settingsFolder = pane.addFolder({ title: 'Settings' });
-            settingsFolder.addInput(PARAMS, 'darkMode', { label: 'Dark Mode' }).on('change', (ev) => {
-                document.body.classList.toggle('light-mode', !ev.value);
-            });
-
-            settingsFolder.addInput(PARAMS, 'resolution', {
-                label: 'Resolution',
-                options: Object.keys(RESOLUTIONS).map(r => ({ text: r, value: r })),
-            }).on('change', (ev) => {
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                }
-                setupCamera(RESOLUTIONS[ev.value]);
-            });
-
-            settingsFolder.addInput(PARAMS, 'frameRate', {
-                label: 'Frame Rate',
-                options: [ { text: 'Native', value: 'Native' }, { text: '30 fps', value: '30' }, { text: '24 fps', value: '24' } ]
-            });
+        // Helper to convert temperature (K) to RGB
+        vec3 kelvinToRGB(float kelvin) {
+            vec3 color = vec3(1.0);
+            kelvin /= 100.0;
+            // Red
+            if (kelvin <= 66.0) color.r = 1.0;
+            else color.r = pow(kelvin - 60.0, -0.1332047592) * 329.698727446 / 255.0;
+            // Green
+            if (kelvin <= 66.0) color.g = (99.4708025861 * log(kelvin) - 161.1195681661) / 255.0;
+            else color.g = pow(kelvin - 60.0, -0.0755148492) * 288.1221695283 / 255.0;
+            // Blue
+            if (kelvin >= 66.0) color.b = 1.0;
+            else if (kelvin <= 19.0) color.b = 0.0;
+            else color.b = (138.5177312231 * log(kelvin - 10.0) - 305.0447927307) / 255.0;
+            return clamp(color, 0.0, 1.0);
         }
 
-        /** Populates the camera selection dropdown once permissions are granted. */
-        async function populateCameraControl() {
+        // 3D LUT for Teal & Orange look
+        vec3 cinematicLUT(vec3 color) {
+            // A simple, simulated 3D LUT for a teal and orange look
+            float blue = color.b * 15.0;
+            float orange = (color.r + color.g) * 0.5 * 15.0;
+
+            vec2 blue_orange = vec2(blue, orange);
+
+            vec3 teal = vec3(0.0, 0.5, 0.5);
+            vec3 orange_color = vec3(1.0, 0.7, 0.0);
+
+            float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+            vec3 result = mix(teal, orange_color, luma);
+
+            return mix(color, result, 0.5);
+        }
+
+        void main() {
+            vec4 color = texture2D(u_texture, v_texCoord);
+
+            // 1. White Balance (Temperature & Tint)
+            vec3 tempRGB = kelvinToRGB(u_temperature);
+            color.rgb *= tempRGB;
+            color.g += u_tint; // Simple green/magenta tint
+
+            // 2. Exposure
+            color.rgb = pow(color.rgb, vec3(1.0 / (1.0 + u_exposure)));
+
+            // 3. Contrast
+            color.rgb = (color.rgb - 0.5) * u_contrast + 0.5;
+
+            // 4. Saturation
+            float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+            color.rgb = mix(vec3(luma), color.rgb, u_saturation);
+
+            // 5. Sharpness (simple kernel)
+            if (u_sharpness > 0.0) {
+                vec2 pixel = 1.0 / u_resolution;
+                float center = texture2D(u_texture, v_texCoord).g;
+                float up = texture2D(u_texture, v_texCoord + vec2(0.0, pixel.y)).g;
+                float down = texture2D(u_texture, v_texCoord - vec2(0.0, pixel.y)).g;
+                float left = texture2D(u_texture, v_texCoord - vec2(pixel.x, 0.0)).g;
+                float right = texture2D(u_texture, v_texCoord + vec2(pixel.x, 0.0)).g;
+                float sharpened = (center * 5.0) - (up + down + left + right);
+                color.rgb = mix(color.rgb, vec3(sharpened), u_sharpness);
+            }
+
+            // 6. Cinematic Look
+            if (u_cinematicLook) {
+                color.rgb = cinematicLUT(color.rgb);
+            }
+
+            gl_FragColor = clamp(color, 0.0, 1.0);
+        }
+    </script>
+
+
+    <script>
+    class VirtualCamera {
+        constructor() {
+            // --- DOM & Core Elements ---
+            this.video = document.getElementById('video-source');
+            this.canvas = document.getElementById('display');
+            this.gl = this.canvas.getContext('webgl');
+
+            // --- State ---
+            this.stream = null;
+            this.isRendering = false;
+
+            // --- Parameters ---
+            this.params = {
+                // Color Lab
+                exposure: 0.0,
+                contrast: 1.0,
+                saturation: 1.0,
+                temperature: 6500,
+                tint: 0.0,
+
+                // Lens Kit
+                sharpness: 0.5,
+
+                // Overlays
+                cinematicBars: true,
+
+                // Master Toggle
+                cinematicLook: true,
+            };
+
+            console.log("VirtualCamera initialized. Ready to start.");
+        }
+
+        async start() {
+            console.log("Starting camera...");
+            if (this.stream) this.stream.getTracks().forEach(track => track.stop());
+
             try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                if (videoDevices.length > 1 && settingsFolder && !settingsFolder.cameraControlAdded) {
-                    const cameraOptions = videoDevices.map(device => ({
-                        text: device.label || `Camera ${videoDevices.indexOf(device) + 1}`,
-                        value: device.deviceId
-                    }));
-                    cameraOptions.unshift({ text: 'Default', value: 'default' });
-                    const cameraControl = settingsFolder.addInput(PARAMS, 'deviceId', { label: 'Camera', options: cameraOptions });
-                    cameraControl.on('change', () => setupCamera(RESOLUTIONS[PARAMS.resolution]));
-                    settingsFolder.cameraControlAdded = true;
-                }
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        facingMode: 'environment'
+                    }
+                });
+
+                this.stream = new MediaStream([...videoStream.getVideoTracks(), ...audioStream.getAudioTracks()]);
+                this.video.srcObject = this.stream;
+
+                this.video.onloadedmetadata = () => {
+                    console.log("Video metadata loaded. Setting up.");
+                    this.gl.canvas.width = this.video.videoWidth;
+                    this.gl.canvas.height = this.video.videoHeight;
+                    this.setupWebGL();
+                    this.setupUI();
+                    this.setupNativeControls();
+                    this.setupCaptureButtons();
+                    if (!this.isRendering) {
+                        this.isRendering = true;
+                        this.render();
+                    }
+                };
             } catch (err) {
-                console.warn("Could not populate camera list.", err);
+                console.error("Failed to start camera:", err);
+                alert("Could not access camera. Please ensure permissions are granted.");
             }
         }
 
-        /** Probes the camera for native hardware controls and adds them to the UI if supported. */
-        function setupNativeControls() {
-            const track = stream.getVideoTracks()[0];
+        setupWebGL() {
+            const gl = this.gl;
+
+            // 1. Compile shaders
+            const vertexShader = this.compileShader(gl.VERTEX_SHADER, document.getElementById('vertex-shader').textContent);
+            const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, document.getElementById('fragment-shader').textContent);
+
+            // 2. Create and link program
+            this.program = gl.createProgram();
+            gl.attachShader(this.program, vertexShader);
+            gl.attachShader(this.program, fragmentShader);
+            gl.linkProgram(this.program);
+            if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+                console.error("Could not link shaders:", gl.getProgramInfoLog(this.program));
+                return;
+            }
+            gl.useProgram(this.program);
+
+            // 3. Look up attribute and uniform locations
+            this.locations = {
+                attributes: {
+                    position: gl.getAttribLocation(this.program, 'a_position'),
+                    texCoord: gl.getAttribLocation(this.program, 'a_texCoord'),
+                },
+                uniforms: {
+                    texture: gl.getUniformLocation(this.program, 'u_texture'),
+                    resolution: gl.getUniformLocation(this.program, 'u_resolution'),
+                    contrast: gl.getUniformLocation(this.program, 'u_contrast'),
+                    exposure: gl.getUniformLocation(this.program, 'u_exposure'),
+                    saturation: gl.getUniformLocation(this.program, 'u_saturation'),
+                    sharpness: gl.getUniformLocation(this.program, 'u_sharpness'),
+                    temperature: gl.getUniformLocation(this.program, 'u_temperature'),
+                    tint: gl.getUniformLocation(this.program, 'u_tint'),
+                    cinematicLook: gl.getUniformLocation(this.program, 'u_cinematicLook'),
+                },
+            };
+
+            // 4. Set up vertex buffer for a plane
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(this.locations.attributes.position);
+            gl.vertexAttribPointer(this.locations.attributes.position, 2, gl.FLOAT, false, 0, 0);
+
+            const texCoordBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(this.locations.attributes.texCoord);
+            gl.vertexAttribPointer(this.locations.attributes.texCoord, 2, gl.FLOAT, false, 0, 0);
+
+            // 5. Create video texture
+            this.texture = this.createTexture();
+
+            console.log("WebGL setup complete.");
+        }
+
+        compileShader(type, source) {
+            const gl = this.gl;
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(`An error occurred compiling the ${type === gl.VERTEX_SHADER ? "vertex" : "fragment"} shader:`, gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        createTexture() {
+            const gl = this.gl;
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            return texture;
+        }
+
+        setupUI() {
+            const pane = new Tweakpane.Pane({ title: 'CineCam Pro' });
+            this.pane = pane;
+
+            // --- Master Cinematic Toggle ---
+            pane.addInput(this.params, 'cinematicLook', { label: 'Cinematic Look' });
+
+            // --- Manual Control Folders (initially hidden) ---
+            const colorFolder = pane.addFolder({ title: 'Color Lab', hidden: this.params.cinematicLook });
+            const lensFolder = pane.addFolder({ title: 'Lens Kit', hidden: this.params.cinematicLook });
+
+            // Link the visibility of folders to the master toggle
+            pane.on('change', (ev) => {
+                if (ev.presetKey === 'cinematicLook') {
+                    colorFolder.hidden = ev.value;
+                    lensFolder.hidden = ev.value;
+                }
+            });
+
+            // --- Color Lab Controls ---
+            colorFolder.addInput(this.params, 'exposure', { min: -1.0, max: 1.0, step: 0.01 });
+            colorFolder.addInput(this.params, 'contrast', { min: 0.0, max: 2.0, step: 0.01 });
+            colorFolder.addInput(this.params, 'saturation', { min: 0.0, max: 2.0, step: 0.01 });
+            colorFolder.addInput(this.params, 'temperature', { min: 2000, max: 10000, step: 100 });
+            colorFolder.addInput(this.params, 'tint', { min: -0.1, max: 0.1, step: 0.005 });
+
+            // --- Lens Kit Controls ---
+            lensFolder.addInput(this.params, 'sharpness', { min: 0.0, max: 2.0, step: 0.05 });
+
+            // --- Overlays ---
+            const overlayFolder = pane.addFolder({ title: 'Overlays' });
+            overlayFolder.addInput(this.params, 'cinematicBars', { label: 'Cinematic Bars' });
+
+            // We will add native controls and settings to their own folders later.
+            console.log("UI setup complete.");
+        }
+
+        setupNativeControls() {
+            const track = this.stream.getVideoTracks()[0];
             if (!track) return;
 
             const capabilities = track.getCapabilities();
+            const settings = track.getSettings();
 
-            // Only create the folder if at least one native control is supported
-            let nativeFolder;
-            const addNativeFolder = () => {
-                if (!nativeFolder) {
-                    nativeFolder = pane.addFolder({ title: 'Native Controls', expanded: false });
-                }
-            };
+            const nativeFolder = this.pane.addFolder({ title: 'Native Controls', expanded: false });
 
-            // --- ISO Control ---
-            if (capabilities.iso) {
-                addNativeFolder();
-                nativeFolder.addInput(track.getSettings(), 'iso', {
-                    min: capabilities.iso.min,
-                    max: capabilities.iso.max,
-                    step: capabilities.iso.step || 1,
-                    label: 'ISO'
-                }).on('change', (ev) => track.applyConstraints({ advanced: [{ iso: ev.value }] }));
-            }
-
-            // --- Exposure Compensation Control ---
             if (capabilities.exposureCompensation) {
-                addNativeFolder();
-                nativeFolder.addInput(track.getSettings(), 'exposureCompensation', {
+                nativeFolder.addInput(settings, 'exposureCompensation', {
                     min: capabilities.exposureCompensation.min,
                     max: capabilities.exposureCompensation.max,
-                    step: capabilities.exposureCompensation.step || 0.1,
+                    step: capabilities.exposureCompensation.step,
                     label: 'EV Comp'
-                }).on('change', (ev) => track.applyConstraints({ advanced: [{ exposureCompensation: ev.value }] }));
+                }).on('change', ev => track.applyConstraints({ advanced: [{ exposureCompensation: ev.value }] }));
             }
-
-            // --- Focus Control ---
-            if (capabilities.focusMode && capabilities.focusMode.includes('manual')) {
-                 addNativeFolder();
-                 // Focus distance
-                 if (capabilities.focusDistance) {
-                    nativeFolder.addInput(track.getSettings(), 'focusDistance', {
-                        min: capabilities.focusDistance.min,
-                        max: capabilities.focusDistance.max,
-                        step: capabilities.focusDistance.step || 0.01,
-                        label: 'Focus'
-                    }).on('change', async (ev) => {
-                        await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: ev.value }] });
-                    });
-                 }
+            if (capabilities.iso) {
+                 nativeFolder.addInput(settings, 'iso', {
+                    min: capabilities.iso.min,
+                    max: capabilities.iso.max,
+                    step: capabilities.iso.step,
+                    label: 'ISO'
+                }).on('change', ev => track.applyConstraints({ advanced: [{ iso: ev.value }] }));
             }
-        }
-
-        /** Initializes the camera stream. */
-        async function setupCamera(constraints = RESOLUTIONS['1080p']) {
-            if (stream) stream.getTracks().forEach(track => track.stop());
-            try {
-                const videoConstraints = {
-                    width: { ideal: constraints.width },
-                    height: { ideal: constraints.height },
-                };
-                if (PARAMS.deviceId && PARAMS.deviceId !== 'default') {
-                    videoConstraints.deviceId = { exact: PARAMS.deviceId };
-                } else {
-                    videoConstraints.facingMode = 'environment';
-                }
-                stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: true });
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    const streamSettings = stream.getVideoTracks()[0].getSettings();
-                    // Set canvas sizes
-                    glCanvas.width = overlayCanvas.width = streamSettings.width;
-                    glCanvas.height = overlayCanvas.height = streamSettings.height;
-
-                    if (!webgl) { // Initialize WebGL canvas on first run
-                        webgl = fx.canvas();
-                        texture = webgl.texture(video);
-                        webgl.replace(glCanvas);
-                    }
-
-                    if (settingsFolder && !settingsFolder.cameraControlAdded) {
-                        populateCameraControl();
-                        // Also set up native controls on the first valid stream
-                        setupNativeControls();
-                    }
-                    setupAudioVisualizer();
-                    lastRenderTime = 0;
-                    requestAnimationFrame(renderFrame);
-                };
-            } catch (err) {
-                console.error("Camera Error:", err);
-                alert(`Could not access camera. Error: ${err.message}`);
+            if (capabilities.focusDistance) {
+                nativeFolder.addInput(settings, 'focusDistance', {
+                    min: capabilities.focusDistance.min,
+                    max: capabilities.focusDistance.max,
+                    step: capabilities.focusDistance.step,
+                    label: 'Focus'
+                }).on('change', ev => track.applyConstraints({ advanced: [{ focusDistance: ev.value }] }));
             }
         }
 
-        // --- Overlay Drawing Functions ---
-        function drawRuleOfThirdsGrid() {
-            const w = overlayCanvas.width, h = overlayCanvas.height;
-            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-            overlayCtx.lineWidth = 1;
-            overlayCtx.setLineDash([5, 3]);
-            overlayCtx.beginPath();
-            overlayCtx.moveTo(w / 3, 0); overlayCtx.lineTo(w / 3, h);
-            overlayCtx.moveTo(2 * w / 3, 0); overlayCtx.lineTo(2 * w / 3, h);
-            overlayCtx.moveTo(0, h / 3); overlayCtx.lineTo(w, h / 3);
-            overlayCtx.moveTo(0, 2 * h / 3); overlayCtx.lineTo(w, 2 * h / 3);
-            overlayCtx.stroke();
-            overlayCtx.setLineDash([]);
+        setupCaptureButtons() {
+            document.getElementById('capture-photo').onclick = () => this.capturePhoto();
+            document.getElementById('record-video').onclick = () => {
+                if (this.isRecording) this.stopRecording();
+                else this.startRecording();
+            };
         }
 
-        function drawCropBars() {
-            const w = overlayCanvas.width, h = overlayCanvas.height;
-            const targetHeight = w / 2.35;
-            const barHeight = (h - targetHeight) / 2;
-            if (barHeight > 0) {
-                overlayCtx.fillStyle = 'black';
-                overlayCtx.fillRect(0, 0, w, barHeight);
-                overlayCtx.fillRect(0, h - barHeight, w, barHeight);
-            }
+        capturePhoto() {
+            const link = document.createElement('a');
+            link.download = `CineCamPro_${Date.now()}.jpg`;
+            link.href = this.canvas.toDataURL('image/jpeg', 0.9);
+            link.click();
         }
 
-        /**
-         * Converts a color temperature in Kelvin to an RGB multiplier.
-         * This is a simplified approximation.
-         * @param {number} kelvin - The temperature in Kelvin.
-         * @returns {Array<number>} An array of [r, g, b] multipliers.
-         */
-        function kelvinToRGB(kelvin) {
-            kelvin = kelvin / 100;
-            let r, g, b;
+        startRecording() {
+            console.log("Starting recording...");
+            this.isRecording = true;
+            document.getElementById('record-video').textContent = 'Stop';
+            document.getElementById('record-video').classList.add('recording');
 
-            // Red component
-            if (kelvin <= 66) {
-                r = 255;
-            } else {
-                r = kelvin - 60;
-                r = 329.698727446 * Math.pow(r, -0.1332047592);
-            }
+            const recordedChunks = [];
+            const canvasStream = this.canvas.captureStream(30);
+            const audioTracks = this.stream.getAudioTracks();
+            const combinedStream = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
 
-            // Green component
-            if (kelvin <= 66) {
-                g = kelvin;
-                g = 99.4708025861 * Math.log(g) - 161.1195681661;
-            } else {
-                g = kelvin - 60;
-                g = 288.1221695283 * Math.pow(g, -0.0755148492);
-            }
-
-            // Blue component
-            if (kelvin >= 66) {
-                b = 255;
-            } else {
-                if (kelvin <= 19) {
-                    b = 0;
-                } else {
-                    b = kelvin - 10;
-                    b = 138.5177312231 * Math.log(b) - 305.0447927307;
-                }
-            }
-
-            return [
-                Math.max(0, Math.min(255, r)) / 255,
-                Math.max(0, Math.min(255, g)) / 255,
-                Math.max(0, Math.min(255, b)) / 255
-            ];
+            this.mediaRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=vp9,opus' });
+            this.mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunks.push(e.data);
+            };
+            this.mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `CineCam_Recording_${Date.now()}.webm`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+            this.mediaRecorder.start();
         }
 
-        /** The main rendering loop. */
-        function renderFrame(timestamp) {
-            requestAnimationFrame(renderFrame);
-
-            if (PARAMS.frameRate !== 'Native') {
-                const targetInterval = 1000 / Number(PARAMS.frameRate);
-                const elapsed = timestamp - lastRenderTime;
-                if (elapsed < targetInterval) return;
-                lastRenderTime = timestamp - (elapsed % targetInterval);
-            }
-
-            // --- WebGL Render Pass ---
-            if (webgl && texture && video.readyState === video.HAVE_ENOUGH_DATA) {
-                texture.loadContentsOf(video);
-                let node = webgl.draw(texture);
-
-                // Apply filters if their values are not neutral
-                if (PARAMS.exposure !== 0 || PARAMS.contrast !== 0) {
-                    node = node.brightnessContrast(PARAMS.exposure, PARAMS.contrast);
-                }
-                if (PARAMS.hue !== 0 || PARAMS.saturate !== 0) {
-                    node = node.hueSaturation(PARAMS.hue, PARAMS.saturate);
-                }
-                if (PARAMS.sharpness > 0) {
-                    node = node.unsharpMask(2, PARAMS.sharpness);
-                }
-                if (PARAMS.temperature !== 6500) {
-                    const rgb = kelvinToRGB(PARAMS.temperature);
-                    // Adjust curves based on temperature. This is a creative interpretation.
-                    // Warmer temps boost red/green, cooler temps boost blue.
-                    node = node.curves(
-                        [[0,0], [rgb[0], rgb[0]], [1,1]], // Red
-                        [[0,0], [rgb[1], rgb[1]], [1,1]], // Green
-                        [[0,0], [rgb[2], rgb[2]], [1,1]]  // Blue
-                    );
-                }
-                if (PARAMS.mirror) {
-                    node = node.flip('x');
-                }
-
-                node.update(); // Final render to canvas
-            }
-
-            // --- 2D Overlay Render Pass ---
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            if (PARAMS.showRuleOfThirds) drawRuleOfThirdsGrid();
-            if (PARAMS.showCropBars) drawCropBars();
-            
-            // --- UI Update ---
-            if (PARAMS.showHistogram) {
-                updateHistogram();
-                histogramCanvas.style.display = 'block';
-            } else {
-                histogramCanvas.style.display = 'none';
-            }
-            updateAudioVisualizer();
+        stopRecording() {
+            console.log("Stopping recording.");
+            this.isRecording = false;
+            document.getElementById('record-video').textContent = 'Record';
+            document.getElementById('record-video').classList.remove('recording');
+            if (this.mediaRecorder) this.mediaRecorder.stop();
         }
 
-        /** Reads the WebGL canvas and draws a real-time histogram. */
-        function updateHistogram() {
-            const w = histogramCanvas.width;
-            const h = histogramCanvas.height;
-            const gl = webgl.gl;
-
-            // Read pixels from the WebGL canvas
-            const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
-            gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-            const bins = new Uint32Array(256).fill(0);
-            let maxBin = 0;
-
-            // Calculate luminosity and populate bins
-            for (let i = 0; i < pixels.length; i += 4) {
-                // Using standard luminosity calculation
-                const r = pixels[i];
-                const g = pixels[i + 1];
-                const b = pixels[i + 2];
-                const luminosity = Math.round(0.21 * r + 0.72 * g + 0.07 * b);
-                bins[luminosity]++;
-            }
-
-            // Find the max bin value for scaling
-            for (let i = 0; i < 256; i++) {
-                if (bins[i] > maxBin) {
-                    maxBin = bins[i];
-                }
-            }
-
-            // Draw the histogram
-            histogramCtx.clearRect(0, 0, w, h);
-            histogramCtx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-            for (let i = 0; i < 256; i++) {
-                const value = (bins[i] / maxBin) * h;
-                histogramCtx.fillRect(i * (w / 256), h - value, (w / 256), value);
-            }
-        }
-
-        // --- Audio Analysis ---
-        /** Sets up the Web Audio API to analyze microphone input. */
-        function setupAudioVisualizer() {
-            if (!stream.getAudioTracks().length) {
-                console.warn("Audio track not available, visualizer disabled.");
+        render() {
+            if (!this.isRendering || this.video.paused || this.video.ended) {
                 return;
             }
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            analyser = audioContext.createAnalyser();
-            const source = audioContext.createMediaStreamSource(stream);
-            source.connect(analyser); // Connect the microphone source to the analyzer
 
-            analyser.fftSize = 256;
-            const bufferLength = analyser.frequencyBinCount;
-            dataArray = new Uint8Array(bufferLength);
+            const gl = this.gl;
+
+            // 1. Update canvas size
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+            // 2. Update video texture
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.video);
+
+            // 3. Set uniforms (pass parameters to shader)
+            gl.uniform1i(this.locations.uniforms.texture, 0);
+            gl.uniform2f(this.locations.uniforms.resolution, gl.canvas.width, gl.canvas.height);
+            gl.uniform1f(this.locations.uniforms.exposure, this.params.exposure);
+            gl.uniform1f(this.locations.uniforms.contrast, this.params.contrast);
+            gl.uniform1f(this.locations.uniforms.saturation, this.params.saturation);
+            gl.uniform1f(this.locations.uniforms.temperature, this.params.temperature);
+            gl.uniform1f(this.locations.uniforms.tint, this.params.tint);
+            gl.uniform1f(this.locations.uniforms.sharpness, this.params.sharpness);
+            gl.uniform1i(this.locations.uniforms.cinematicLook, this.params.cinematicLook ? 1 : 0);
+
+            // 4. Draw the plane
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            
+            // 5. Update Overlays
+            this.updateOverlays();
+
+            requestAnimationFrame(() => this.render());
         }
 
-        /** Analyzes audio data and updates the visualizer bar. */
-        function updateAudioVisualizer() {
-            if (!analyser) return;
-
-            analyser.getByteFrequencyData(dataArray); // Get frequency data
+        updateOverlays() {
+            const bars = document.querySelectorAll('#cinematic-bars .bar');
+            const targetHeight = this.canvas.clientHeight / 2.35;
+            const barHeight = (this.canvas.clientHeight - targetHeight) / 2;
             
-            let sum = 0;
-            for (const amplitude of dataArray) {
-                sum += amplitude;
-            }
-            const average = sum / dataArray.length;
-            // Normalize and scale the volume for better visualization
-            const volumePercent = (average / 255) * 150; 
-            
-            const audioLevelEl = document.getElementById('audio-level');
-            if (audioLevelEl) {
-                audioLevelEl.style.width = `${Math.min(100, volumePercent)}%`;
+            if (this.params.cinematicBars && barHeight > 0) {
+                bars.forEach(bar => bar.style.height = `${barHeight}px`);
+            } else {
+                bars.forEach(bar => bar.style.height = '0px');
             }
         }
+    }
 
-        // --- Media Capture State ---
-        let mediaRecorder; // The MediaRecorder instance
-        let recordedChunks = []; // Array to store recorded video chunks
-        let isRecording = false; // Flag to track recording status
-
-        // --- Capture & Recording Setup ---
-        /** Sets up event listeners for photo and video capture buttons. */
-        function setupMediaButtons() {
-            const photoButton = document.getElementById('capture-photo');
-            const recordButton = document.getElementById('record-video');
-            const downloadLinksContainer = document.getElementById('download-links');
-
-            // Photo Capture
-            photoButton.addEventListener('click', () => {
-                // Create a temporary canvas to composite the WebGL and overlay canvases
-                const tempCanvas = document.createElement('canvas');
-                const tempCtx = tempCanvas.getContext('2d');
-                const w = webgl.canvas.width;
-                const h = webgl.canvas.height;
-                tempCanvas.width = w;
-                tempCanvas.height = h;
-
-                // 1. Draw the WebGL canvas content
-                tempCtx.drawImage(webgl.canvas, 0, 0, w, h);
-
-                // 2. Draw the 2D overlay canvas on top
-                tempCtx.drawImage(overlayCanvas, 0, 0, w, h);
-
-                // 3. Get the final image data
-                const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.9);
-                
-                // Create a temporary link to trigger the download
-                const link = document.createElement('a');
-                link.href = dataUrl;
-                link.download = `CineCamPro_Capture_${Date.now()}.jpg`;
-                link.click();
-            });
-
-            // Video Recording
-            recordButton.addEventListener('click', () => {
-                if (isRecording) {
-                    // --- Stop Recording ---
-                    mediaRecorder.stop();
-                    recordButton.textContent = 'Start Recording';
-                    recordButton.style.backgroundColor = ''; // Revert to default color
-                    isRecording = false;
-                } else {
-                    // --- Start Recording ---
-                    startRecording();
-                    recordButton.textContent = 'Stop Recording';
-                    recordButton.style.backgroundColor = '#ff4136'; // Use red to indicate recording
-                    isRecording = true;
-                }
-            });
-
-            /** Initializes and starts the video recording process. */
-            function startRecording() {
-                recordedChunks = [];
-                // Get a video stream from the canvas (includes all visual effects)
-                const canvasStream = canvas.captureStream(30); // Record at 30 FPS
-                
-                // Get the audio track from the original microphone stream
-                const audioTracks = stream.getAudioTracks();
-                
-                // Combine the canvas video and microphone audio into one stream
-                const combinedStream = new MediaStream([
-                    ...canvasStream.getVideoTracks(),
-                    ...audioTracks
-                ]);
-
-                // Create and configure the MediaRecorder
-                mediaRecorder = new MediaRecorder(combinedStream, {
-                    mimeType: 'video/webm; codecs=vp9,opus' // Use a modern, high-quality codec
-                });
-
-                // Event handler for when data is available
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
-                        recordedChunks.push(event.data);
-                    }
-                };
-
-                // Event handler for when recording is stopped
-                mediaRecorder.onstop = () => {
-                    // Combine all recorded chunks into a single Blob
-                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                    const url = URL.createObjectURL(blob);
-                    
-                    // Create a download link for the recorded video
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `CineCamPro_Recording_${Date.now()}.webm`;
-                    link.textContent = `Download Video (${(blob.size / 1024 / 1024).toFixed(2)} MB)`;
-                    link.style.display = 'block';
-                    link.style.margin = '10px';
-                    downloadLinksContainer.appendChild(link);
-                };
-                
-                mediaRecorder.start(); // Start recording
-            }
-        }
-
-        // --- Application Entry Point ---
-        /**
-         * Main initializer that runs when the DOM is fully loaded.
-         */
-        document.addEventListener('DOMContentLoaded', () => {
-            // Set the initial theme based on the PARAMS default
-            document.body.classList.toggle('light-mode', !PARAMS.darkMode);
-            
-            // Set up the UI controls panel
-            setupControls();
-
-            // Set up media capture buttons
-            setupMediaButtons();
-
-            // Set up the mobile controls toggle button
-            controlsToggleButton.addEventListener('click', () => {
-                controlsContainer.classList.toggle('visible');
-            });
-            
-            // Hide controls panel when clicking outside of it on mobile
-            canvas.addEventListener('click', () => {
-                if (controlsContainer.classList.contains('visible')) {
-                    controlsContainer.classList.remove('visible');
-                }
-            });
-
-            // Initialize the camera
-            setupCamera(RESOLUTIONS[PARAMS.resolution]);
-        });
+    // --- App Entry Point ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const app = new VirtualCamera();
+        app.start();
+    });
     </script>
-
 </body>
 </html>
